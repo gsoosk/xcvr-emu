@@ -84,6 +84,12 @@ class EmulatorServer(emulator_pb2_grpc.SfpEmulatorServiceServicer):
             )
 
         xcvr = self.xcvrs[req.index]
+        if not xcvr.present and not req.force:
+            raise grpc.RpcError(
+                grpc.StatusCode.UNAVAILABLE,
+                f"Transceiver({req.index}) is not present",
+            )
+
         data = xcvr.read(req)
 
         logger.debug(

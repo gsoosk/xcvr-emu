@@ -158,7 +158,17 @@ class EmulatorServer(emulator_pb2_grpc.SfpEmulatorServiceServicer):
             )
             for v in xcvr._dpsms.values()
         ]
-        return pb2.GetInfoResponse(present=xcvr.present, dpsms=dpsms)
+        # Expose the module state machine (msm) alongside the datapath SMs so the
+        # black-box harness can cross-check that xcvrd drove the MODULE (not just
+        # the datapath) to the expected CMIS state -- e.g. MODULE_READY after CMIS
+        # bring-up vs MODULE_LOW_PWR at the admin-down baseline. state uses the CMIS
+        # ModuleStateEnum name; vendor_name is best-effort from the EEPROM.
+        try:
+            vendor_name = str(xcvr.mem_map.VendorName.value).rstrip("\x00").strip()
+        except Exception:  # noqa: BLE001 - vendor name is a non-critical extra
+            vendor_name = ""
+        msm = pb2.ModuleState(state=xcvr._state.name, vendor_name=vendor_name)
+        return pb2.GetInfoResponse(present=xcvr.present, msm=msm, dpsms=dpsms)
 
     async def UpdateInfo(
         self, req: pb2.UpdateInfoRequest, context

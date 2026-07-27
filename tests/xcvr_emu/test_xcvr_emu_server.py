@@ -6,6 +6,7 @@ from xcvr_emu.proto.emulator_pb2 import (
     ListRequest,
     ListResponse,
     DeleteRequest,
+    GetInfoRequest,
 )
 
 import pytest
@@ -57,3 +58,16 @@ async def test_Write(server):
     req = ReadRequest(index=0, bank=0, offset=0, page=0, length=1, force=True)
     res = await server.Read(req, None)
     assert res.data == bytes([0xAA])
+
+
+@pytest.mark.asyncio
+async def test_GetInfo_msm(server):
+    # GetInfo exposes the module state machine (msm) so the black-box harness can
+    # cross-check that xcvrd drove the MODULE to the expected CMIS state, mirroring
+    # how dpsms lets it cross-check the datapath. A present, admin-down module sits
+    # at the low-power baseline until a host clears LowPwrRequestSW.
+    res = await server.GetInfo(GetInfoRequest(index=0), None)
+    assert res.present is True
+    assert res.HasField("msm")
+    assert res.msm.state == "MODULE_LOW_PWR"
+    assert res.msm.vendor_name == "xcvr-emu"

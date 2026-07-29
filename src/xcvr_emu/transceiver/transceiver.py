@@ -17,6 +17,17 @@ from ..proto.emulator_pb2 import ReadRequest, WriteRequest
 logger = logging.getLogger(__name__)
 
 
+# --- Fault injection --------------------------------------------------------
+# A reserved control page the harness writes to inject module faults, so the
+# black-box tests can exercise xcvrd's error/retry paths without a proto change.
+# Writes to (FAULT_PAGE, 0) set the fault bitmap; it is NOT stored in the EEPROM
+# and never surfaces to the CMIS decode. Faults persist across plug/unplug until
+# explicitly cleared (write 0), so a test can arm a fault then insert the module.
+FAULT_PAGE = 0xFE
+FAULT_READ = 0x01       # identity-page (page 0) reads fail -> xcvrd EEPROM read-retry
+FAULT_DP_STALL = 0x02   # module never reaches ModuleReady -> xcvrd CMIS retry -> FAILED
+
+
 class CMISTransceiver:
     def __init__(self, index: int, config: dict, mem_map: MemMap | None = None):
         super().__init__()
@@ -25,6 +36,9 @@ class CMISTransceiver:
         self._queue: asyncio.Queue = asyncio.Queue()
         self._task: asyncio.Task | None = None
         self._present = False
+        # Injected-fault bitmap. Set only here (not in _init) so an armed fault
+        # survives the _init_eeprom that runs on every plugin().
+        self._faults = 0
 
         self.mem_map = MemMap() if mem_map is None else mem_map
 
@@ -190,12 +204,27 @@ class CMISTransceiver:
                     self.mem_map.BankSelect.value = req.bank
 
     def read(self, req: ReadRequest) -> bytes:
+        # Fault-control page: read back the current fault bitmap (never EEPROM).
+        if req.page == FAULT_PAGE:
+            return bytes([self._faults]) + b"\x00" * max(0, req.length - 1)
+        # Injected read fault: identity-page (page 0) reads fail as if the EEPROM
+        # were unreadable, so xcvrd's insertion identity read fails and it enters
+        # its retry-eeprom loop. force reads (diagnostic) bypass the fault.
+        if (self._faults & FAULT_READ) and req.page == 0 and not req.force:
+            raise RuntimeError(
+                f"Transceiver({self._index}) injected read fault on page 0")
         if not req.force and not self.present:
             return b"\x00" * req.length
         self._page_bank_emulation(req)
         return self.mem_map.read(req.bank, req.page, req.offset, req.length)
 
     def write(self, req: WriteRequest) -> None:
+        # Fault-control page: set the fault bitmap; do not store in EEPROM/queue.
+        if req.page == FAULT_PAGE:
+            self._faults = req.data[0] if req.data else 0
+            logger.info(
+                f"Transceiver({self._index}) fault bitmap set to {self._faults:#04x}")
+            return
         self._page_bank_emulation(req)
         self.mem_map.write(req.bank, req.page, req.offset, req.length, req.data)
         if req.length == 1:
@@ -261,6 +290,13 @@ class CMISTransceiver:
 
                 low_pwr = self.mem_map.LowPwrRequestSW
                 if low_pwr.value == low_pwr.LOW_POWER_MODE:
+                    state = ModuleState.MODULE_LOW_PWR
+                elif self._faults & FAULT_DP_STALL:
+                    # Injected datapath stall: the module never leaves low power,
+                    # so it never reaches ModuleReady. xcvrd's CmisManagerTask
+                    # keeps timing out waiting for ModuleReady and retries, and
+                    # after CMIS_MAX_RETRIES drives cmis_state to FAILED. While it
+                    # retries the state stays non-terminal (DOM is gated).
                     state = ModuleState.MODULE_LOW_PWR
                 else:
                     state = ModuleState.MODULE_READY

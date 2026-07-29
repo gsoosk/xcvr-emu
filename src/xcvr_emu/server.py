@@ -9,7 +9,7 @@ import grpc
 import yaml
 
 from .proto import emulator_pb2 as pb2
-from .transceiver import CMISTransceiver
+from .transceiver import CMISTransceiver, make_transceiver
 
 # see https://github.com/grpc/grpc/issues/29459#issuecomment-1641587881
 proto_dir = os.path.dirname(pb2.__file__)
@@ -40,10 +40,11 @@ class EmulatorServer(emulator_pb2_grpc.SfpEmulatorServiceServicer):
                 raise e from None
 
         for k, v in config["transceivers"].items():
-            # Each transceiver gets its OWN MemMap (CMISTransceiver defaults
-            # mem_map to a fresh MemMap when None) so emulated modules do not
-            # share/alias register state.
-            xcvr = CMISTransceiver(k, v)
+            # Each transceiver gets its OWN state (CMISTransceiver defaults
+            # mem_map to a fresh MemMap when None; SFF8636Transceiver gets a
+            # fresh EEPROM) so emulated modules do not share/alias register
+            # state. The config ``type`` selects the management family.
+            xcvr = make_transceiver(k, v)
             self.xcvrs[k] = xcvr
 
     async def stop(self):
@@ -61,7 +62,7 @@ class EmulatorServer(emulator_pb2_grpc.SfpEmulatorServiceServicer):
                 f"Transceiver({req.index}) already exists",
             )
 
-        xcvr = CMISTransceiver(req.index, {})
+        xcvr = make_transceiver(req.index, {})
         self.xcvrs[req.index] = xcvr
 
         return pb2.CreateResponse()

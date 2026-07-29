@@ -12,6 +12,8 @@
 
 `xcvr-emu` is a [CMIS](https://www.oiforum.com/technical-work/hot-topics/management/) transceiver emulator. It is a software tool that emulates the behavior of a CMIS transceiver. It is intended to be used for testing and development purposes.
 
+`xcvr-emu` can also emulate **SFF-8636 (QSFP+/QSFP28)** modules. Set `type: sff8636` on a transceiver in the config to serve a QSFP28 EEPROM image (identifier `0x11`, identity, DOM monitors + thresholds, and a daemon-driven `TX_DISABLE` at `00h:86`) instead of the default CMIS module (`type: cmis`). SONiC selects the SFF-8636 management path automatically from the identifier byte.
+
 ## Installation
 
 To install `xcvr-emu`, you need to have Python 3.10 or later installed on your system. You can install `xcvr-emu` using `pip`:

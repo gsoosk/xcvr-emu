@@ -227,6 +227,12 @@ async def test_dpsm_decommission_reports_config_success(caplog, xcvr: CMISTransc
             f"lane {i} ConfigStatus={m.ConfigStatusLane[i].value} (expected SUCCESS) "
             "-- decommission did not report success"
         )
+    # Lanes that were never triggered stay untouched (a 4-lane apply must not report
+    # success on the module's other host lanes).
+    for i in range(4, 8):
+        assert m.ConfigStatusLane[i].value != m.ConfigStatusLane.SUCCESS, (
+            f"lane {i} spuriously reported ConfigSuccess (it was not applied)"
+        )
     # The active application select is cleared on the decommissioned lanes.
     for i in range(4):
         assert m.ACS_DPConfigLane[i].AppSelCode.value == 0

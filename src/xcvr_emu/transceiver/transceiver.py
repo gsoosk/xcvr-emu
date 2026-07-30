@@ -108,16 +108,25 @@ class CMISTransceiver:
                 f"Applying DPInit({i}): {value:b} AppSelCode: {scs.AppSelCode.value}"
             )
             self.mem_map.ACS_DPConfigLane[i].value = value
-            if scs.AppSelCode.value == 0:
-                continue
 
-            # TODO validate the config and set appropriate status
-            self.mem_map.DPInitPendingLane[
-                i
-            ].value = self.mem_map.DPInitPendingLane.PENDING
+            # Applying the staged config always succeeds in the emulator. Report
+            # ConfigSuccess for EVERY applied lane -- including AppSel=0 lanes. A host
+            # switching a datapath to a different application first decommissions the
+            # lanes (stages AppSel=0 and applies), then polls ConfigStatusLane for
+            # ConfigSuccess before re-provisioning. Without success on the AppSel=0
+            # lanes that poll never converges and the datapath re-provision (e.g. a
+            # port speed / application change) stalls.
             self.mem_map.ConfigStatusLane[
                 i
             ].value = self.mem_map.ConfigStatusLane.SUCCESS
+
+            if scs.AppSelCode.value == 0:
+                continue
+
+            # A used lane additionally flags a pending datapath init.
+            self.mem_map.DPInitPendingLane[
+                i
+            ].value = self.mem_map.DPInitPendingLane.PENDING
 
         return True
 

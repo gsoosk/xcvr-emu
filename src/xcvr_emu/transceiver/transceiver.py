@@ -102,7 +102,15 @@ class CMISTransceiver:
         self._dpsms = dpsms
 
     def _apply_dpinit(self):
+        apply = self.mem_map.SCS0_ApplyTriggers.ApplyDPInitLane
         for i, scs in enumerate(self.mem_map.SCS0_DPConfigLane):
+            # Only lanes actually triggered by ApplyDPInit are being (re)provisioned.
+            # Lanes that are permanently unused (never triggered) keep their status
+            # untouched, so a 4-lane application does not spuriously report success on
+            # the module's other host lanes.
+            if apply[i].value == apply[i].NO_ACTION:
+                continue
+
             value = scs.value
             logger.info(
                 f"Applying DPInit({i}): {value:b} AppSelCode: {scs.AppSelCode.value}"
@@ -110,12 +118,12 @@ class CMISTransceiver:
             self.mem_map.ACS_DPConfigLane[i].value = value
 
             # Applying the staged config always succeeds in the emulator. Report
-            # ConfigSuccess for EVERY applied lane -- including AppSel=0 lanes. A host
-            # switching a datapath to a different application first decommissions the
-            # lanes (stages AppSel=0 and applies), then polls ConfigStatusLane for
-            # ConfigSuccess before re-provisioning. Without success on the AppSel=0
-            # lanes that poll never converges and the datapath re-provision (e.g. a
-            # port speed / application change) stalls.
+            # ConfigSuccess for the applied lane -- INCLUDING an AppSel=0 (decommission)
+            # apply. A host switching a datapath to a different application first
+            # decommissions the lanes (stages AppSel=0 and applies), then polls
+            # ConfigStatusLane for ConfigSuccess before it re-provisions. Without success
+            # on the AppSel=0 lanes that poll never converges and the datapath
+            # re-provision (e.g. a port speed / application change) stalls.
             self.mem_map.ConfigStatusLane[
                 i
             ].value = self.mem_map.ConfigStatusLane.SUCCESS

@@ -195,3 +195,75 @@ async def test_dpsm_activation_with_bank(caplog, xcvr: CMISTransceiver):
         m.bank = bank
         for i in range(4):
             assert m.DPStateHostLane[i].value == m.DPStateHostLane.DPACTIVATED
+
+
+@pytest.mark.asyncio
+async def test_dpsm_decommission_reports_config_success(caplog, xcvr: CMISTransceiver):
+    """Decommissioning a datapath (staging AppSelCode=0 on the active lanes and
+    applying) must report ConfigStatusLane=SUCCESS for those lanes.
+
+    A host switching a datapath to a different application (e.g. a port speed change
+    that selects a different CMIS application) first decommissions the lanes -- stages
+    AppSel=0 and applies -- then polls ConfigStatusLane for ConfigSuccess before it
+    re-provisions with the new application. Without success on the AppSel=0 lanes that
+    poll never converges and the re-provision stalls (the host times the datapath out
+    and the port fails)."""
+    m = MemMap(remote=MemoryAccessor(xcvr))
+
+    m.LowPwrRequestSW.value = m.LowPwrRequestSW.NO_REQUEST
+    await asyncio.sleep(0.1)
+    assert m.ModuleState.value == m.ModuleState.MODULE_READY
+
+    # Decommission the 4 active host lanes: stage AppSelCode 0, then apply.
+    for i in range(4):
+        m.SCS0_DPConfigLane[i].AppSelCode.value = 0
+    for i in range(4):
+        m.SCS0_ApplyTriggers.ApplyDPInitLane[i].value = m.SCS0_ApplyTriggers.ApplyDPInitLane[i].PROVISION
+    await asyncio.sleep(0.1)
+
+    # Every decommissioned lane reports ConfigSuccess.
+    for i in range(4):
+        assert m.ConfigStatusLane[i].value == m.ConfigStatusLane.SUCCESS, (
+            f"lane {i} ConfigStatus={m.ConfigStatusLane[i].value} (expected SUCCESS) "
+            "-- decommission did not report success"
+        )
+    # The active application select is cleared on the decommissioned lanes.
+    for i in range(4):
+        assert m.ACS_DPConfigLane[i].AppSelCode.value == 0
+
+
+@pytest.mark.asyncio
+async def test_dpsm_reprovision_to_second_application(caplog, xcvr: CMISTransceiver):
+    """After a decommission the module can be re-provisioned to a DIFFERENT application
+    (a non-default AppSelCode) and that datapath activates -- the full
+    decommission -> re-provision handshake a port speed / application change drives."""
+    m = MemMap(remote=MemoryAccessor(xcvr))
+
+    m.LowPwrRequestSW.value = m.LowPwrRequestSW.NO_REQUEST
+    await asyncio.sleep(0.1)
+    assert m.ModuleState.value == m.ModuleState.MODULE_READY
+
+    # Decommission all four lanes.
+    for i in range(4):
+        m.SCS0_DPConfigLane[i].AppSelCode.value = 0
+    for i in range(4):
+        m.SCS0_ApplyTriggers.ApplyDPInitLane[i].value = m.SCS0_ApplyTriggers.ApplyDPInitLane[i].PROVISION
+    await asyncio.sleep(0.1)
+    for i in range(4):
+        assert m.ConfigStatusLane[i].value == m.ConfigStatusLane.SUCCESS
+
+    # Re-provision the four lanes to application 2 (AppSelCode 2, a non-default app).
+    for i in range(4):
+        m.SCS0_DPConfigLane[i].AppSelCode.value = 2
+        m.SCS0_DPConfigLane[i].DataPathID.value = 1
+    for i in range(4):
+        m.SCS0_ApplyTriggers.ApplyDPInitLane[i].value = m.SCS0_ApplyTriggers.ApplyDPInitLane[i].PROVISION
+    await asyncio.sleep(0.1)
+
+    # The second application is now the active select and reports ConfigSuccess...
+    for i in range(4):
+        assert m.ACS_DPConfigLane[i].AppSelCode.value == 2
+        assert m.ConfigStatusLane[i].value == m.ConfigStatusLane.SUCCESS
+    # ...and the datapath activates for the new application.
+    for i in range(4):
+        assert m.DPStateHostLane[i].value == m.DPStateHostLane.DPACTIVATED

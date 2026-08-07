@@ -2,7 +2,16 @@ FROM python:3.11 AS builder
 
 WORKDIR /app
 
-RUN pip install --upgrade pip setuptools pip-tools build
+# Pin pip below 25.3 for the build toolchain.
+#
+# pip 25.3 removed the internal `stdlib_pkgs` symbol from
+# pip._internal.utils.compat, which pip-tools still imports (piptools/sync.py).
+# With an unpinned upgrade the builder picks up current pip (26.x) and the very
+# next step dies with:
+#   ImportError: cannot import name 'stdlib_pkgs' from 'pip._internal.utils.compat'
+# Upgrading pip-tools does NOT help -- the latest release (7.6.0) still imports it.
+# This only constrains the build-time resolver; no runtime dependency changes.
+RUN pip install --upgrade "pip<25.3" setuptools pip-tools build
 
 COPY pyproject.toml /app/
 
